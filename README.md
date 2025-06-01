@@ -15,6 +15,7 @@ git clone https://github.com/wimtdw/foodgram-st.git
 ```
 cd foodgram-st/infra
 ```
+Создать файл .env (в папке infra есть пример содержимого - 'example .env').
 
 Запустить проект:
 
