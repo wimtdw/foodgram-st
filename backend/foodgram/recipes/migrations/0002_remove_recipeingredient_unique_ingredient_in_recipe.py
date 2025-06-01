@@ -4,14 +4,13 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('recipes', '0001_initial'),
+        ("recipes", "0001_initial"),
     ]
 
     operations = [
         migrations.RemoveConstraint(
-            model_name='recipeingredient',
-            name='unique_ingredient_in_recipe',
+            model_name="recipeingredient",
+            name="unique_ingredient_in_recipe",
         ),
     ]
