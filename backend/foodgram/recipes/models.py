@@ -49,10 +49,12 @@ class Recipe(models.Model):
         related_name='recipes',
         verbose_name='Ингредиенты'
     )
+    pub_date = models.DateTimeField('Дата публикации', auto_now_add=True)
 
     class Meta:
         verbose_name = 'Рецепт'
         verbose_name_plural = 'Рецепты'
+        ordering = ['-pub_date', 'name']
 
     def __str__(self):
         return self.name
@@ -81,3 +83,16 @@ class RecipeIngredient(models.Model):
     def __str__(self):
         return (f'{self.ingredient.name} - {self.amount} '
                 f'{self.ingredient.measurement_unit}')
+
+
+class Follow(models.Model):
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='following')
+    following = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='followers')
+
+    class Meta:
+        unique_together = ('user', 'following')
+
+    def __str__(self):
+        return f'{self.user.username} follows {self.following.username}'

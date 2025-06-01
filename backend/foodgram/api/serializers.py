@@ -1,9 +1,7 @@
-
-from recipes.models import Recipe, Ingredient, RecipeIngredient
+from recipes.models import Follow, Recipe, Ingredient, RecipeIngredient
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from djoser.serializers import UserCreateSerializer, UserSerializer
-from rest_framework.relations import SlugRelatedField
 import base64
 from django.core.files.base import ContentFile
 
@@ -65,8 +63,40 @@ class CustomUserSerializer(UserSerializer):
         fields = UserSerializer.Meta.fields + ('first_name', 'last_name', 'is_subscribed', 'avatar')
     
     def get_is_subscribed(self, obj):
-        # Implement your subscription logic here
-        return False
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return Follow.objects.filter(
+            user=request.user,
+            following=obj
+        ).exists()
+    
+
+class RecipeMinifiedSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Recipe
+        fields = ('id', 'name', 'image', 'cooking_time')
+
+class CustomUserWithRecipesSerializer(CustomUserSerializer):
+    recipes = serializers.SerializerMethodField()
+    recipes_count = serializers.SerializerMethodField()
+
+    class Meta(CustomUserSerializer.Meta):
+        fields = CustomUserSerializer.Meta.fields + ('recipes', 'recipes_count')
+
+    def get_recipes(self, obj):
+        recipes_limit = self.context.get('request').query_params.get('recipes_limit')
+        recipes = obj.recipes.all()
+        if recipes_limit:
+            try:
+                recipes_limit = int(recipes_limit)
+                if recipes_limit > 0:
+                    recipes = recipes[:recipes_limit]
+            except:
+                pass
+        return RecipeMinifiedSerializer(recipes, many=True).data
+    def get_recipes_count(self, obj):
+        return obj.recipes.count()
     
 class UserAvatarSerializer(serializers.ModelSerializer):
     avatar = Base64ImageField()
@@ -96,15 +126,45 @@ class RecipeSerializer(serializers.ModelSerializer):
             'cooking_time', 'ingredients', 'is_favorited', 'is_in_shopping_cart'
         )
         read_only_fileds = ('author', 'is_favorited', 'is_in_shopping_cart')
-
+    
     def get_is_favorited(self, obj):
-        # Implement your subscription logic here
-        return False
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return request.user.favorite_recipes.filter(id=obj.id).exists()
     
     def get_is_in_shopping_cart(self, obj):
-        # Implement your subscription logic here
-        return False
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return request.user.shopping_cart.filter(id=obj.id).exists()
 
+    def validate(self, data):
+        if 'ingredient_amounts' in data and data['ingredient_amounts']:
+            ingredients_data = data['ingredient_amounts']
+            ingredient_ids = set()
+            duplicates = set()
+            
+            for item in ingredients_data:
+                ingredient = item.get('ingredient')
+                if not ingredient:
+                    continue
+                ingredient_id = ingredient.id
+                if ingredient_id in ingredient_ids:
+                    duplicates.add(ingredient_id)
+                else:
+                    ingredient_ids.add(ingredient_id)
+            if duplicates:
+                duplicate_ids = ', '.join(map(str, duplicates))
+                raise serializers.ValidationError(
+                    {"ingredients": [f"Duplicate ingredient IDs: {duplicate_ids}"]}
+                )
+        else:
+            raise serializers.ValidationError(
+                {"ingredients": ["At least one ingredient must be provided."]}
+            )
+        return data
+    
     def create_ingredients(self, recipe, ingredients):
         for ingredient_data in ingredients:
             ingredient = ingredient_data['ingredient']
@@ -123,9 +183,8 @@ class RecipeSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         ingredients = validated_data.pop('ingredient_amounts', None)
-        
         if ingredients:
             instance.ingredient_amounts.all().delete()
             self.create_ingredients(instance, ingredients)
-            
         return super().update(instance, validated_data)
+    
