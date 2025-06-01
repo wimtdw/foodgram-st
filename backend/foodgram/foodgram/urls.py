@@ -5,9 +5,9 @@ from django.conf.urls.static import static
 from api.views import redirect_short_link
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('api/', include('api.urls')),
-    path('s/<str:short_code>/', redirect_short_link, name='short-link-redirect'),
+    path("admin/", admin.site.urls),
+    path("api/", include("api.urls")),
+    path("s/<str:short_code>/", redirect_short_link, name="short-link-redirect"),
 ]
 
 if settings.DEBUG:

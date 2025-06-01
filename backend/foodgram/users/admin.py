@@ -5,11 +5,11 @@ from .models import MyUser
 
 UserAdmin.fieldsets += (
     (
-        'Дополнительные поля',
+        "Дополнительные поля",
         {
-            'fields': (
-                'is_subscribed',
-                'avatar',
+            "fields": (
+                "is_subscribed",
+                "avatar",
             )
         },
     ),
