@@ -1,5 +1,5 @@
 from rest_framework.response import Response
-from rest_framework import status, viewsets, exceptions
+from rest_framework import status, viewsets
 from django.db.models import Sum
 from django.http import HttpResponse
 from djoser.views import UserViewSet
@@ -10,42 +10,20 @@ from django_filters import rest_framework as filters
 from django.urls import reverse
 from django.shortcuts import redirect
 from recipes.models import Follow, Ingredient, Recipe, RecipeIngredient
+from django.contrib.auth import get_user_model
+from .permissions import IsAuthorOrReadOnly
+from .utils import encode_id_to_base62, decode_base62_to_id
 from .serializers import (
     CustomUserWithRecipesSerializer,
+    FollowSerializer,
     IngredientSerializer,
     RecipeMinifiedSerializer,
     RecipeSerializer,
     UserAvatarSerializer,
 )
-import string
-from django.contrib.auth import get_user_model
 
-
-BASE62_ALPHABET = string.digits + string.ascii_letters
-BASE62_LENGTH = len(BASE62_ALPHABET)
 
 User = get_user_model()
-
-
-def encode_id_to_base62(pk: int) -> str:
-    """Преобразует ID в строку base62"""
-    if pk == 0:
-        return BASE62_ALPHABET[0]
-
-    result = []
-    num = pk
-    while num:
-        num, rem = divmod(num, BASE62_LENGTH)
-        result.append(BASE62_ALPHABET[rem])
-    return "".join(result[::-1])
-
-
-def decode_base62_to_id(short_code: str) -> int:
-    """Преобразует строку base62 обратно в ID"""
-    num = 0
-    for char in short_code:
-        num = num * BASE62_LENGTH + BASE62_ALPHABET.index(char)
-    return num
 
 
 class IngredientSearchFilter(SearchFilter):
@@ -73,7 +51,7 @@ class CustomUserViewSet(UserViewSet):
     def get_permissions(self):
         if self.action == "retrieve" or self.action == "list":
             return [AllowAny()]
-        elif self.action == "subscribe":
+        if self.action == "subscribe":
             return [IsAuthenticated()]
         return super().get_permissions()
 
@@ -82,10 +60,9 @@ class CustomUserViewSet(UserViewSet):
         user = request.user
         if request.method == "PUT":
             serializer = UserAvatarSerializer(user, data=request.data)
-            if serializer.is_valid():
-                serializer.save()
-                return Response(serializer.data, status=status.HTTP_200_OK)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
 
         elif request.method == "DELETE":
             if user.avatar:
@@ -99,20 +76,25 @@ class CustomUserViewSet(UserViewSet):
         user = request.user
         author = self.get_object()
         if request.method == "POST":
-            if user == author:
-                return Response(status=status.HTTP_400_BAD_REQUEST)
-            if Follow.objects.filter(user=user, following=author).exists():
-                return Response(status=status.HTTP_400_BAD_REQUEST)
+            serializer = FollowSerializer(
+                data={
+                    'user': user.id,
+                    'following': author.id
+                },
+                context={'request': request}
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
 
-            Follow.objects.create(user=user, following=author)
             serializer = CustomUserWithRecipesSerializer(
                 author, context={"request": request}
             )
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         elif request.method == "DELETE":
-            follow = Follow.objects.filter(user=user, following=author).first()
-            if not follow:
+            try:
+                follow = user.following.get(following=author)
+            except Follow.DoesNotExist:
                 return Response(status=status.HTTP_400_BAD_REQUEST)
             follow.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
@@ -160,24 +142,15 @@ class RecipeViewSet(viewsets.ModelViewSet):
     Поддерживает все стандартные операции CRUD.
     """
 
-    queryset = Recipe.objects.prefetch_related("ingredient_amounts__ingredient").all()
+    queryset = Recipe.objects.prefetch_related(
+        "ingredient_amounts__ingredient").all()
     serializer_class = RecipeSerializer
     filter_backends = (filters.DjangoFilterBackend,)
     filterset_class = RecipeFilter
+    permission_classes = (IsAuthorOrReadOnly,)
 
     def perform_create(self, serializer):
         serializer.save(author=self.request.user)
-
-    def perform_update(self, serializer):
-        if serializer.instance.author != self.request.user:
-            raise exceptions.PermissionDenied("Изменение чужого контента запрещено!")
-        serializer.save(author=self.request.user)
-
-    def perform_destroy(self, serializer):
-        instance = self.get_object()
-        if instance.author != self.request.user:
-            raise exceptions.PermissionDenied("Удаление чужого контента запрещено!")
-        instance.delete()
 
     def _handle_user_lists(self, request, relation_field, *args, **kwargs):
         user = request.user
@@ -196,13 +169,25 @@ class RecipeViewSet(viewsets.ModelViewSet):
             manager.remove(recipe)
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @action(detail=True, methods=["post", "delete"], url_path="favorite")
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        url_path="favorite",
+        permission_classes=[IsAuthenticated],
+    )
     def favorite(self, request, *args, **kwargs):
-        return self._handle_user_lists(request, "favorite_recipes", *args, **kwargs)
+        return self._handle_user_lists(request,
+                                       "favorite_recipes", *args, **kwargs)
 
-    @action(detail=True, methods=["post", "delete"], url_path="shopping_cart")
+    @action(
+        detail=True,
+        methods=["post", "delete"],
+        url_path="shopping_cart",
+        permission_classes=[IsAuthenticated],
+    )
     def shopping_cart(self, request, *args, **kwargs):
-        return self._handle_user_lists(request, "shopping_cart", *args, **kwargs)
+        return self._handle_user_lists(request,
+                                       "shopping_cart", *args, **kwargs)
 
     @action(detail=True, methods=["get"], url_path="get-link")
     def get_short_link(self, request, pk=None):
@@ -211,7 +196,8 @@ class RecipeViewSet(viewsets.ModelViewSet):
         """
         recipe = self.get_object()
         short_code = encode_id_to_base62(recipe.id)
-        relative_url = reverse("short-link-redirect", kwargs={"short_code": short_code})
+        relative_url = reverse("short-link-redirect",
+                               kwargs={"short_code": short_code})
         full_short_url = request.build_absolute_uri(relative_url)
 
         return Response({"short-link": full_short_url})

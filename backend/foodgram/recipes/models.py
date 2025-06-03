@@ -1,13 +1,21 @@
 from django.db import models
 from django.contrib.auth import get_user_model
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator
+from .constants import (
+    MIN_COOKING_TIME,
+    MAX_COOKING_TIME,
+    MAX_INGREDIENT_AMOUNT,
+    MIN_INGREDIENT_AMOUNT
+)
+
 
 User = get_user_model()
 
 
 class Ingredient(models.Model):
     name = models.CharField(max_length=128, verbose_name="Название")
-    measurement_unit = models.CharField(max_length=64, verbose_name="Единица измерения")
+    measurement_unit = models.CharField(
+        max_length=64, verbose_name="Единица измерения")
 
     class Meta:
         verbose_name = "Ингредиент"
@@ -26,10 +34,14 @@ class Recipe(models.Model):
         verbose_name="Автор публикации",
     )
     name = models.CharField(max_length=256, verbose_name="Название")
-    image = models.ImageField(upload_to="recipes/", verbose_name="Картинка рецепта")
+    image = models.ImageField(upload_to="recipes/",
+                              verbose_name="Картинка рецепта")
     text = models.TextField(verbose_name="Описание")
-    cooking_time = models.PositiveIntegerField(
-        validators=[MinValueValidator(1)],
+    cooking_time = models.PositiveSmallIntegerField(
+        validators=[
+            MinValueValidator(MIN_COOKING_TIME),
+            MaxValueValidator(MAX_COOKING_TIME),
+        ],
         verbose_name="Время приготовления (в минутах)",
     )
     ingredients = models.ManyToManyField(
@@ -49,7 +61,10 @@ class Recipe(models.Model):
         ordering = ["-pub_date", "name"]
 
     def __str__(self):
-        return f"{self.name}, Автор - {self.author.first_name} {self.author.last_name} ({self.author.username}, {self.author.email})"
+        return (
+            f"{self.name}, Автор - {self.author.first_name} "
+            f"{self.author.last_name} ({self.author.username}, "
+            f"{self.author.email})")
 
 
 class RecipeIngredient(models.Model):
@@ -59,13 +74,18 @@ class RecipeIngredient(models.Model):
     ingredient = models.ForeignKey(
         Ingredient, on_delete=models.CASCADE, verbose_name="Ингредиент"
     )
-    amount = models.PositiveIntegerField(
-        validators=[MinValueValidator(1)], verbose_name="Количество"
+    amount = models.PositiveSmallIntegerField(
+        validators=[
+            MinValueValidator(MIN_INGREDIENT_AMOUNT),
+            MaxValueValidator(MAX_INGREDIENT_AMOUNT),
+        ],
+        verbose_name="Количество"
     )
 
     class Meta:
         verbose_name = "Ингредиент в рецепте"
         verbose_name_plural = "Ингредиенты в рецепте"
+        ordering = ["recipe__name", "ingredient__name"]
 
     def __str__(self):
         return (
@@ -75,7 +95,8 @@ class RecipeIngredient(models.Model):
 
 
 class Follow(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="following")
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="following")
     following = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="followers"
     )
@@ -84,6 +105,7 @@ class Follow(models.Model):
         verbose_name = "Данные о подписках"
         verbose_name_plural = "Данные о подписках"
         unique_together = ("user", "following")
+        ordering = ["user__username", "following__username"]
 
     def __str__(self):
         return f"{self.user.username} подписан на {self.following.username}"
